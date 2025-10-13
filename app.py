@@ -9,7 +9,7 @@ import numpy as np
 app = Flask(__name__)
 
 # ===== Seguridad básica por API KEY =====
-API_KEY = os.environ.get("API_KEY", "")  # config en Railway
+API_KEY = os.environ.get("API_KEY", "TOKEN_IA_123456")
 def require_api_key(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
