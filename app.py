@@ -55,22 +55,12 @@ def health():
 @app.post("/predict")
 @require_api_key
 def predict():
-    """
-    Espera JSON con:
-    {
-      "EducationLevel": "Preparatoria|Licenciatura|Maestría|Doctorado",
-      "ExperienceYears": 0-40,
-      "RecruitmentStrategy": "Recomendado|Portales de empleo|Headhunting",
-      "PersonalityScore": 0-100,
-      "SkillScore": 0-100,
-      "InterviewScore": 0-100
-    }
-    """
     if model is None:
         return jsonify({"ok": False, "error": "Modelo no cargado"}), 500
 
     data = request.get_json(force=True, silent=True) or {}
     try:
+        # Normalizaciones y casteos (como ya tenías)
         edu = MAP_EDUCATION.get(norm(data.get("EducationLevel","")), 1)
         yrs = int(data.get("ExperienceYears", 0))
         strat = MAP_STRATEGY.get(norm(data.get("RecruitmentStrategy","")), 1)
@@ -78,16 +68,18 @@ def predict():
         ss = int(data.get("SkillScore", 0))
         iscore = int(data.get("InterviewScore", 0))
 
-        X = np.array([[edu, yrs, strat, ps, ss, iscore]], dtype=float)
+        # ==== ORDEN CORRECTO SEGÚN TU MODELO =====
+        # feature_names_in_ = ['PersonalityScore','SkillScore','InterviewScore',
+        #                      'EducationLevel','ExperienceYears','RecruitmentStrategy']
+        X = np.array([[ps, ss, iscore, edu, yrs, strat]], dtype=float)
 
-        # Si tu modelo predice probabilidad:
+        # Predicción -> score 0..100
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(X)
-            # Suponiendo clase positiva = 1
-            p = float(proba[0, 1]) if proba.shape[1] > 1 else float(proba[0, 0])
-            evaluation_score = int(round(p * 100))
+            # tus classes_ = [0, 1], positiva es la 1 (columna índice 1)
+            p = float(proba[0, 1])
+            evaluation_score = int(round(max(0.0, min(1.0, p)) * 100))
         else:
-            # Si es regresión o score directo 0-100
             y = float(model.predict(X)[0])
             evaluation_score = int(max(0, min(100, round(y))))
 
