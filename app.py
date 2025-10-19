@@ -173,3 +173,16 @@ def debug_echo():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+@app.get("/debug/importances")
+def debug_importances():
+    try:
+        imps = getattr(model, "feature_importances_", None)
+        return jsonify({
+            "ok": True,
+            "feature_names": list(getattr(model, "feature_names_in_", [])),
+            "feature_importances": (imps.tolist() if imps is not None else None),
+            "classes_": (model.classes_.tolist() if hasattr(model, "classes_") else None)
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
