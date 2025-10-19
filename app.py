@@ -117,7 +117,8 @@ def predict():
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(X)
             p = float(proba[0, 1])  # classes_ = [0,1], positiva en índice 1
-            evaluation_score = int(round(max(0.0, min(1.0, p)) * 100))
+            p_adj = min(1.0, max(0.0, p ** 0.5))
+            evaluation_score = int(round(p_adj * 100))
         else:
             y = float(model.predict(X)[0])
             evaluation_score = int(max(0, min(100, round(y))))
