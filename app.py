@@ -99,7 +99,7 @@ def predict():
     data = request.get_json(force=True, silent=True) or {}
     try:
         # Texto -> normalizado al catálogo; luego mapeo 1..4 / 1..3
-        edu_txt = normalize_education(data.get("EducationLevel", ""))
+        edu_txt   = normalize_education(data.get("EducationLevel", ""))
         strat_txt = normalize_strategy(data.get("RecruitmentStrategy", ""))
 
         edu   = MAP_EDUCATION.get(edu_txt, 1)   # 1..4
@@ -114,15 +114,33 @@ def predict():
         # ['PersonalityScore','SkillScore','InterviewScore','EducationLevel','ExperienceYears','RecruitmentStrategy']
         X = np.array([[ps, ss, iscore, edu, yrs, strat]], dtype=float)
 
+        # --- Predicción base y suavizado ---
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(X)
             p = float(proba[0, 1])  # classes_ = [0,1], positiva en índice 1
-            p_adj = min(1.0, max(0.0, p ** 0.5))
-            evaluation_score = int(round(p_adj * 100))
+            p_adj = min(1.0, max(0.0, p ** 0.5))  # suavizado por raíz cuadrada
         else:
             y = float(model.predict(X)[0])
-            evaluation_score = int(max(0, min(100, round(y))))
+            p_adj = min(1.0, max(0.0, y / 100.0))
 
+        # --- Mérito independiente (mitiga sesgo de RecruitmentStrategy) ---
+        avg_scores = (ps + ss + iscore) / 3.0       # 0..100
+        s_norm     = avg_scores / 100.0             # 0..1
+        exp_norm   = min(1.0, yrs / 5.0)            # 0..1 (pleno a partir de 5 años)
+        edu_norm   = (edu - 1.0) / 3.0              # 1..4 -> 0..1
+
+        # ponderaciones (ajustables)
+        merit = (0.60 * s_norm) + (0.25 * exp_norm) + (0.15 * edu_norm)
+        merit = min(1.0, max(0.0, merit))
+
+        # --- Blend final: modelo (70%) + mérito (30%) ---
+        p_blend = (0.70 * p_adj) + (0.30 * merit)
+
+        # --- Piso opcional: perfiles fuertes aunque no sean recomendados ---
+        if (ps >= 90 and ss >= 90 and iscore >= 90 and yrs >= 3):
+            p_blend = max(p_blend, 0.75)
+
+        evaluation_score = int(round(100 * min(1.0, max(0.0, p_blend))))
         viability = to_viability(evaluation_score)
 
         return jsonify({
