@@ -98,49 +98,78 @@ def predict():
 
     data = request.get_json(force=True, silent=True) or {}
     try:
-        # Texto -> normalizado al catálogo; luego mapeo 1..4 / 1..3
+        # ---- Normalización a catálogo y mapeos numéricos ----
         edu_txt   = normalize_education(data.get("EducationLevel", ""))
         strat_txt = normalize_strategy(data.get("RecruitmentStrategy", ""))
 
-        edu   = MAP_EDUCATION.get(edu_txt, 1)   # 1..4
-        strat = MAP_STRATEGY.get(strat_txt, 1)  # 1..3
+        edu   = MAP_EDUCATION.get(edu_txt, 1)      # 1..4
+        strat = MAP_STRATEGY.get(strat_txt, 1)     # 1..3
         yrs   = int(data.get("ExperienceYears", 0))
 
-        ps    = int(data.get("PersonalityScore", 0))
-        ss    = int(data.get("SkillScore", 0))
-        iscore= int(data.get("InterviewScore", 0))
+        ps     = int(data.get("PersonalityScore", 0))
+        ss     = int(data.get("SkillScore", 0))
+        iscore = int(data.get("InterviewScore", 0))
 
-        # ORDEN EXACTO según feature_names_in_:
-        # ['PersonalityScore','SkillScore','InterviewScore','EducationLevel','ExperienceYears','RecruitmentStrategy']
-        X = np.array([[ps, ss, iscore, edu, yrs, strat]], dtype=float)
+        # Diccionario maestro de features (para armar vectores en cualquier orden)
+        feats = {
+            "PersonalityScore": ps,
+            "SkillScore": ss,
+            "InterviewScore": iscore,
+            "EducationLevel": edu,
+            "ExperienceYears": yrs,
+            "RecruitmentStrategy": strat
+        }
 
-        # --- Predicción base y suavizado ---
-        if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(X)
-            p = float(proba[0, 1])  # classes_ = [0,1], positiva en índice 1
-            p_adj = min(1.0, max(0.0, p ** 0.5))  # suavizado por raíz cuadrada
+        # ---- Detección: bundle (ensemble) vs. modelo único ----
+        # Bundle esperado: {"with": cal_with, "wo": cal_wo, "alpha": float, "features_with": [...], "features_wo": [...]}
+        if isinstance(model, dict) and all(k in model for k in ("with", "wo", "alpha", "features_with", "features_wo")):
+            cal_with = model["with"]
+            cal_wo   = model["wo"]
+            alpha    = float(model["alpha"])
+            f_with   = model["features_with"]
+            f_wo     = model["features_wo"]
+
+            # Armar X para cada submodelo según su orden de features
+            X_with = np.array([[feats[f] for f in f_with]], dtype=float)
+            X_wo   = np.array([[feats[f] for f in f_wo]], dtype=float)
+
+            # Probabilidades calibradas de cada submodelo
+            if hasattr(cal_with, "predict_proba") and hasattr(cal_wo, "predict_proba"):
+                p_with = float(cal_with.predict_proba(X_with)[0, 1])
+                p_wo   = float(cal_wo.predict_proba(X_wo)[0, 1])
+            else:
+                # Fallback extremadamente raro (por si no hay proba)
+                p_with = float(cal_with.predict(X_with)[0])
+                p_wo   = float(cal_wo.predict(X_wo)[0])
+                # Forzar a [0,1] por seguridad
+                p_with = max(0.0, min(1.0, p_with))
+                p_wo   = max(0.0, min(1.0, p_wo))
+
+            # Mezcla con α aprendido (¡no aplicar suavizado extra aquí!)
+            p = alpha * p_with + (1.0 - alpha) * p_wo
+
         else:
-            y = float(model.predict(X)[0])
-            p_adj = min(1.0, max(0.0, y / 100.0))
+            # ---- Modelo único clásico (compatibilidad hacia atrás) ----
+            # Intentar respetar el orden reportado por feature_names_in_ si existe;
+            # de lo contrario usar el orden estándar del dataset.
+            order = None
+            if hasattr(model, "feature_names_in_"):
+                order = list(model.feature_names_in_)
+            else:
+                order = ["PersonalityScore", "SkillScore", "InterviewScore",
+                         "EducationLevel", "ExperienceYears", "RecruitmentStrategy"]
 
-        # --- Mérito independiente (mitiga sesgo de RecruitmentStrategy) ---
-        avg_scores = (ps + ss + iscore) / 3.0       # 0..100
-        s_norm     = avg_scores / 100.0             # 0..1
-        exp_norm   = min(1.0, yrs / 5.0)            # 0..1 (pleno a partir de 5 años)
-        edu_norm   = (edu - 1.0) / 3.0              # 1..4 -> 0..1
+            X = np.array([[feats.get(f, 0) for f in order]], dtype=float)
 
-        # ponderaciones (ajustables)
-        merit = (0.60 * s_norm) + (0.25 * exp_norm) + (0.15 * edu_norm)
-        merit = min(1.0, max(0.0, merit))
+            if hasattr(model, "predict_proba"):
+                p = float(model.predict_proba(X)[0, 1])
+            else:
+                y = float(model.predict(X)[0])
+                p = max(0.0, min(1.0, y))  # clamp por seguridad
 
-        # --- Blend final: modelo (70%) + mérito (30%) ---
-        p_blend = (0.70 * p_adj) + (0.30 * merit)
-
-        # --- Piso opcional: perfiles fuertes aunque no sean recomendados ---
-        if (ps >= 90 and ss >= 90 and iscore >= 90 and yrs >= 3):
-            p_blend = max(p_blend, 0.85)
-
-        evaluation_score = int(round(100 * min(1.0, max(0.0, p_blend))))
+        # Clamp final a [0,1] y conversión a 0..100
+        p = max(0.0, min(1.0, p))
+        evaluation_score = int(round(p * 100))
         viability = to_viability(evaluation_score)
 
         return jsonify({
