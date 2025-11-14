@@ -137,7 +137,7 @@ def predict():
         p_blend = (0.70 * p_adj) + (0.30 * merit)
 
         # --- Piso opcional: perfiles fuertes aunque no sean recomendados ---
-        if (ps >= 90 and ss >= 90 and iscore >= 90 and yrs >= 3):
+        if (ps >= 85 and ss >= 85 and iscore >= 85 and yrs >= 3):
             p_blend = max(p_blend, 0.85)
 
         evaluation_score = int(round(100 * min(1.0, max(0.0, p_blend))))
