@@ -138,7 +138,7 @@ def predict():
 
         # --- Piso opcional: perfiles fuertes aunque no sean recomendados ---
         if (ps >= 90 and ss >= 90 and iscore >= 90 and yrs >= 3):
-            p_blend = max(p_blend, 0.85)
+            p_blend = max(p_blend, 0.75)
 
         evaluation_score = int(round(100 * min(1.0, max(0.0, p_blend))))
         viability = to_viability(evaluation_score)
